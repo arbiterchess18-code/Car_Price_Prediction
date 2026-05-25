@@ -1,3 +1,4 @@
+import inspect
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -32,6 +33,32 @@ def clean_missing_values(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
         cat_imputer = SimpleImputer(strategy='most_frequent')
         df_clean[cat_cols] = cat_imputer.fit_transform(df_clean[cat_cols])
 
+    return df_clean
+
+
+def extract_brand_name(model_name: str) -> str:
+    if not isinstance(model_name, str) or not model_name.strip():
+        return 'Unknown'
+
+    known_brands = [
+        'Mercedes-Benz', 'Land Rover', 'Rolls-Royce', 'BMW', 'Audi', 'Jaguar',
+        'Volkswagen', 'Chevrolet', 'Hyundai', 'Honda', 'Maruti', 'Toyota',
+        'Tata', 'Ford', 'Renault', 'Nissan', 'Kia', 'MG', 'Skoda', 'Volvo',
+        'Datsun', 'Jeep', 'Fiat', 'Mitsubishi', 'Mahindra', 'Bentley', 'Porsche',
+    ]
+    lower_name = model_name.strip().lower()
+    for brand in known_brands:
+        if lower_name.startswith(brand.lower()):
+            return brand
+
+    first_token = model_name.strip().split()[0]
+    return first_token
+
+
+def prepare_brand_feature(df: pd.DataFrame) -> pd.DataFrame:
+    df_clean = df.copy()
+    if 'name' in df_clean.columns and 'brand' not in df_clean.columns:
+        df_clean['brand'] = df_clean['name'].apply(extract_brand_name)
     return df_clean
 
 
@@ -80,10 +107,15 @@ def build_preprocessing_pipeline(
     if categorical_columns:
         categorical_steps.append(('imputer', SimpleImputer(strategy='most_frequent')))
         if encoding == 'One-Hot Encoding':
+            encoder_kwargs = {'handle_unknown': 'ignore'}
+            if 'sparse_output' in inspect.signature(OneHotEncoder.__init__).parameters:
+                encoder_kwargs['sparse_output'] = False
+            else:
+                encoder_kwargs['sparse'] = False
             categorical_steps.append(
                 (
                     'encoder',
-                    OneHotEncoder(handle_unknown='ignore', sparse=False),
+                    OneHotEncoder(**encoder_kwargs),
                 )
             )
         elif encoding == 'Label Encoding':
@@ -132,10 +164,12 @@ def _match_column(columns: list, keywords: list, numeric=False):
 def find_manual_input_columns(df: pd.DataFrame) -> dict:
     columns = list(df.columns)
     field_requirements = {
-        'brand': {'keywords': ['brand', 'make', 'manufacturer', 'model'], 'type': 'categorical'},
+        'brand': {'keywords': ['brand', 'make', 'manufacturer', 'model', 'name'], 'type': 'categorical'},
         'year': {'keywords': ['year', 'manufacture', 'model_year'], 'type': 'numeric'},
         'fuel_type': {'keywords': ['fuel', 'fuel_type', 'fueltype'], 'type': 'categorical'},
         'transmission': {'keywords': ['transmission', 'trans'], 'type': 'categorical'},
+        'seller_type': {'keywords': ['seller', 'seller_type', 'seller type'], 'type': 'categorical'},
+        'owner': {'keywords': ['owner'], 'type': 'categorical'},
         'mileage': {'keywords': ['mileage', 'miles', 'mpg'], 'type': 'numeric'},
         'engine_size': {'keywords': ['engine', 'cc', 'displacement'], 'type': 'numeric'},
         'kilometers_driven': {'keywords': ['kilometer', 'km', 'kilometers', 'distance'], 'type': 'numeric'},
@@ -145,12 +179,17 @@ def find_manual_input_columns(df: pd.DataFrame) -> dict:
     for field_name, props in field_requirements.items():
         matched = _match_column(columns, props['keywords'], numeric=props['type'] == 'numeric')
         if matched:
-            field_label = field_name.replace('_', ' ').title()
+            if matched == 'name':
+                field_label = 'Name'
+            elif field_name == 'brand':
+                field_label = 'Brand'
+            else:
+                field_label = field_name.replace('_', ' ').title()
             field_data = {'name': matched, 'label': f'{field_label} ({matched})', 'type': props['type']}
             if props['type'] == 'categorical':
-                unique_values = df[matched].dropna().unique().tolist()
-                if len(unique_values) > 0 and len(unique_values) <= 20:
-                    field_data['options'] = sorted(map(str, unique_values))
+                unique_values = df[matched].dropna().astype(str).unique().tolist()
+                if len(unique_values) > 0 and len(unique_values) <= 500:
+                    field_data['options'] = sorted(unique_values)
             if props['type'] == 'numeric':
                 default_value = float(df[matched].median()) if pd.api.types.is_numeric_dtype(df[matched]) else 0.0
                 field_data['default'] = default_value

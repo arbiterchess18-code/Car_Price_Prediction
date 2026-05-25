@@ -7,6 +7,7 @@ from utils.preprocessing import (
     remove_outliers,
     build_preprocessing_pipeline,
     extract_feature_names,
+    prepare_brand_feature,
     split_features_target,
     find_manual_input_columns,
 )
@@ -89,10 +90,23 @@ def show_upload_section():
             st.success('Dataset uploaded successfully!')
             display_dataset_summary(df)
             st.markdown('---')
-            target_option = st.selectbox('Select the target column to predict', options=df.columns)
+            target_columns = list(df.columns)
+            default_target = 'selling_price' if 'selling_price' in target_columns else next(
+                (col for col in target_columns if 'price' in col.lower()), target_columns[0]
+            )
+            target_option = st.selectbox(
+                'Select the target column to predict',
+                options=target_columns,
+                index=target_columns.index(default_target),
+            )
             if target_option:
                 st.session_state.target_column = target_option
-                st.info(f'Selected target column: **{target_option}**')
+                if target_option.lower() == 'name':
+                    st.warning(
+                        'The dataset name field should not be used as target. Choose a price column like selling_price.'
+                    )
+                else:
+                    st.info(f'Selected target column: **{target_option}**')
         except Exception as ex:
             st.error('Unable to read CSV file. Please upload a valid CSV.')
             st.error(str(ex))
@@ -127,17 +141,35 @@ def show_preprocessing_section():
 
     if st.button('Apply preprocessing'):
         with st.spinner('Applying preprocessing pipeline...'):
-            if missing_strategy != 'None':
-                df = clean_missing_values(df, missing_strategy)
-            if remove_outliers_flag:
-                numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-                df = remove_outliers(df, numeric_cols)
-
             if st.session_state.target_column is None:
                 st.error('Please select a target column in the Upload section.')
                 return
 
-            X, y = split_features_target(df, st.session_state.target_column)
+            if st.session_state.target_column.lower() == 'name':
+                if 'selling_price' in df.columns:
+                    new_target = 'selling_price'
+                else:
+                    new_target = next((col for col in df.columns if 'price' in col.lower()), None)
+                if new_target:
+                    st.warning(f"Target 'name' is not valid. Switching target to '{new_target}'.")
+                    st.session_state.target_column = new_target
+                else:
+                    st.error('No valid price target available. Please upload a dataset with a price column.')
+                    return
+
+            if 'name' in df.columns and 'brand' not in df.columns:
+                df = prepare_brand_feature(df)
+                st.info('Extracted car brand from name and added a new brand feature.')
+
+            if st.session_state.target_column not in df.columns:
+                st.error(f"Target column '{st.session_state.target_column}' not found in dataset after preprocessing.")
+                return
+
+            try:
+                X, y = split_features_target(df, st.session_state.target_column)
+            except ValueError as ex:
+                st.error(str(ex))
+                return
             preprocessor, numeric_cols, categorical_cols = build_preprocessing_pipeline(
                 X,
                 encoding=encoding_choice,
@@ -291,7 +323,6 @@ def show_prediction_section():
 
     manual_cols = st.session_state.manual_columns
     st.subheader('Enter car details for prediction')
-    car_name = st.text_input('Car Name', value='', help='Optional label for the vehicle you are predicting.')
     input_data = {}
     for key, col_info in manual_cols.items():
         label = col_info['label']
@@ -319,8 +350,7 @@ def show_prediction_section():
             row = pd.DataFrame([manual_row])
             try:
                 prediction = st.session_state.model_pipeline.predict(row)
-                title = f'Estimated car price for {car_name}: ' if car_name else 'Estimated car price: '
-                st.success(f'{title}₹{prediction[0]:,.2f}')
+                st.success(f'Estimated car price: ₹{prediction[0]:,.2f}')
             except Exception as ex:
                 st.error('Unable to generate prediction from the entered values.')
                 st.error(str(ex))
