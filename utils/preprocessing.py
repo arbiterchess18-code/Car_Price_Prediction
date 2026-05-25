@@ -107,15 +107,18 @@ def build_preprocessing_pipeline(
     if categorical_columns:
         categorical_steps.append(('imputer', SimpleImputer(strategy='most_frequent')))
         if encoding == 'One-Hot Encoding':
-            encoder_kwargs = {'handle_unknown': 'ignore'}
-            if 'sparse_output' in inspect.signature(OneHotEncoder.__init__).parameters:
-                encoder_kwargs['sparse_output'] = False
-            else:
-                encoder_kwargs['sparse'] = False
+            encoder = None
+            try:
+                encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+            except TypeError:
+                try:
+                    encoder = OneHotEncoder(handle_unknown='ignore', sparse=False)
+                except TypeError:
+                    encoder = OneHotEncoder(handle_unknown='ignore')
             categorical_steps.append(
                 (
                     'encoder',
-                    OneHotEncoder(**encoder_kwargs),
+                    encoder,
                 )
             )
         elif encoding == 'Label Encoding':
