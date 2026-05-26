@@ -22,8 +22,14 @@ def get_regression_model(name: str):
             from xgboost import XGBRegressor
 
             return XGBRegressor(random_state=42, verbosity=0)
-        except ImportError:
-            raise ImportError('XGBoost is not installed. Install xgboost in your environment.')
+        except Exception as e:
+            # Provide a clearer error message for common XGBoost load issues (e.g., missing libomp on macOS)
+            raise ImportError(
+                "XGBoost is not available or failed to load. "
+                "On macOS you may need to install the OpenMP runtime (libomp) first: `brew install libomp`. "
+                "Then reinstall xgboost (e.g. `pip install --force-reinstall xgboost`). "
+                f"Original error: {e}"
+            ) from e
     raise ValueError(f'Model {name} is not supported.')
 
 
@@ -118,3 +124,58 @@ def train_model_pipeline(
         metrics['cv_r2_std'] = cv_scores.std()
 
     return pipeline, metrics
+
+
+def auto_train_best_model(
+    X,
+    y,
+    preprocessor,
+    split_ratio: float = 0.2,
+    random_state: int = 42,
+    use_cross_validation: bool = False,
+    use_hyperparam_search: bool = False,
+    search_type: str = None,
+):
+    candidates = [
+        'Random Forest Regressor',
+        'XGBoost Regressor',
+        'Decision Tree Regressor',
+        'KNN Regressor',
+        'Linear Regression',
+    ]
+    best_r2 = -np.inf
+    best_pipeline = None
+    best_metrics = None
+    best_model_name = None
+
+    if use_hyperparam_search and not search_type:
+        search_type = 'GridSearchCV'
+
+    for model_name in candidates:
+        try:
+            model = get_regression_model(model_name)
+        except ImportError:
+            continue
+        param_grid = get_hyperparameter_grid(model_name) if use_hyperparam_search else None
+        try:
+            pipeline, metrics = train_model_pipeline(
+                X,
+                y,
+                preprocessor,
+                model,
+                param_grid,
+                search_type,
+                split_ratio,
+                random_state,
+                use_cross_validation,
+            )
+        except Exception:
+            continue
+
+        if metrics.get('r2', -np.inf) > best_r2:
+            best_r2 = metrics['r2']
+            best_pipeline = pipeline
+            best_metrics = metrics
+            best_model_name = model_name
+
+    return best_pipeline, best_metrics, best_model_name

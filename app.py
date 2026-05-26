@@ -22,6 +22,7 @@ from utils.visualization import (
     plot_actual_vs_predicted,
 )
 from utils.modeling import (
+    auto_train_best_model,
     get_regression_model,
     get_hyperparameter_grid,
     train_model_pipeline,
@@ -161,6 +162,17 @@ def show_preprocessing_section():
                 df = prepare_brand_feature(df)
                 st.info('Extracted car brand from name and added a new brand feature.')
 
+            if missing_strategy != 'None':
+                df = clean_missing_values(df, missing_strategy)
+                st.info(f'Applied missing value strategy: {missing_strategy}')
+
+            if remove_outliers_flag:
+                numeric_cols_for_outliers = df.select_dtypes(include=np.number).columns.tolist()
+                if st.session_state.target_column in numeric_cols_for_outliers:
+                    numeric_cols_for_outliers.remove(st.session_state.target_column)
+                df = remove_outliers(df, numeric_cols_for_outliers)
+                st.info('Removed outliers from numeric features.')
+
             if st.session_state.target_column not in df.columns:
                 st.error(f"Target column '{st.session_state.target_column}' not found in dataset after preprocessing.")
                 return
@@ -204,43 +216,66 @@ def show_eda_section():
     numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
 
-    st.subheader('Dataset Visualizations')
-    col1, col2 = st.columns(2)
+    st.subheader('Select visualizations to display')
+    col1, col2, col3 = st.columns(3)
     with col1:
-        chart_columns = st.multiselect('Choose columns for distribution charts', numeric_cols, default=numeric_cols[:3])
-        if chart_columns:
-            st.plotly_chart(plot_histogram(df, chart_columns), width='stretch')
+        show_histogram = st.checkbox('Histogram', value=True)
+        show_boxplot = st.checkbox('Boxplot', value=True)
+        show_correlation = st.checkbox('Correlation Heatmap', value=True)
     with col2:
-        box_columns = st.multiselect('Choose columns for boxplots', numeric_cols, default=numeric_cols[:3], key='box_columns')
-        if box_columns:
-            st.plotly_chart(plot_boxplot(df, box_columns), width='stretch')
+        show_scatter = st.checkbox('Scatter Plot', value=True)
+        show_pairplot = st.checkbox('Pairplot', value=True)
+        show_feature_imp = st.checkbox('Feature Importance', value=True)
+    with col3:
+        st.write('')
+
+    st.subheader('Dataset Visualizations')
+    
+    if show_histogram:
+        col1, col2 = st.columns(2)
+        with col1:
+            chart_columns = st.multiselect('Choose columns for distribution charts', numeric_cols, default=numeric_cols[:3], key='hist_columns')
+            if chart_columns:
+                st.plotly_chart(plot_histogram(df, chart_columns), use_container_width=True)
+    
+    if show_boxplot:
+        col1, col2 = st.columns(2)
+        with col1:
+            box_columns = st.multiselect('Choose columns for boxplots', numeric_cols, default=numeric_cols[:3], key='box_columns')
+            if box_columns:
+                st.plotly_chart(plot_boxplot(df, box_columns), use_container_width=True)
 
     st.markdown('---')
     st.subheader('Correlation and Scatter Analyses')
-    if numeric_cols:
-        st.plotly_chart(correlation_heatmap(df[numeric_cols]), width='stretch')
+    
+    if show_correlation:
+        if numeric_cols:
+            st.plotly_chart(correlation_heatmap(df[numeric_cols]), use_container_width=True)
 
-    scatter_x = st.selectbox('Scatter X axis', numeric_cols, index=0 if numeric_cols else None, key='scatter_x')
-    scatter_y = st.selectbox('Scatter Y axis', numeric_cols, index=1 if len(numeric_cols) > 1 else None, key='scatter_y')
-    if scatter_x and scatter_y and scatter_x != scatter_y:
-        st.plotly_chart(plot_scatter(df, scatter_x, scatter_y), width='stretch')
+    if show_scatter:
+        scatter_x = st.selectbox('Scatter X axis', numeric_cols, index=0 if numeric_cols else None, key='scatter_x')
+        scatter_y = st.selectbox('Scatter Y axis', numeric_cols, index=1 if len(numeric_cols) > 1 else None, key='scatter_y')
+        if scatter_x and scatter_y and scatter_x != scatter_y:
+            st.plotly_chart(plot_scatter(df, scatter_x, scatter_y), use_container_width=True)
 
-    if len(numeric_cols) >= 3:
-        selected_pair = st.multiselect('Select features for pairplot', numeric_cols[:5], default=numeric_cols[:3], key='pairplot_columns')
-        if selected_pair:
-            st.plotly_chart(plot_pairplot(df, selected_pair), width='stretch')
+    if show_pairplot:
+        if len(numeric_cols) >= 3:
+            selected_pair = st.multiselect('Select features for pairplot', numeric_cols[:5], default=numeric_cols[:3], key='pairplot_columns')
+            if selected_pair:
+                st.plotly_chart(plot_pairplot(df, selected_pair), use_container_width=True)
 
-    if st.session_state.trained_model is not None and st.session_state.feature_names is not None:
-        st.markdown('---')
-        st.subheader('Feature importance')
-        importance_chart = plot_feature_importance(
-            st.session_state.trained_model,
-            st.session_state.feature_names,
-        )
-        if importance_chart is not None:
-            st.plotly_chart(importance_chart, width='stretch')
-        else:
-            st.info('Feature importance is unavailable for the selected model.')
+    if show_feature_imp:
+        if st.session_state.trained_model is not None and st.session_state.feature_names is not None:
+            st.markdown('---')
+            st.subheader('Feature importance')
+            importance_chart = plot_feature_importance(
+                st.session_state.trained_model,
+                st.session_state.feature_names,
+            )
+            if importance_chart is not None:
+                st.plotly_chart(importance_chart, use_container_width=True)
+            else:
+                st.info('Feature importance is unavailable for the selected model.')
 
 
 def show_modeling_section():
@@ -267,31 +302,61 @@ def show_modeling_section():
     if use_hyperparam_search:
         search_type = st.selectbox('Search method', ['GridSearchCV', 'RandomizedSearchCV'])
 
-    if st.button('Train model'):
-        with st.spinner('Training the model. This may take a moment...'):
-            preprocessor = st.session_state.preprocessor
-            if preprocessor is None:
-                st.warning('No preprocessing pipeline found. Rebuilding with default options.')
-                preprocessor, numeric_cols, categorical_cols = build_preprocessing_pipeline(X)
-                st.session_state.preprocessor = preprocessor
-                st.session_state.feature_names = extract_feature_names(preprocessor, numeric_cols, categorical_cols)
-            model = get_regression_model(model_choice)
-            param_grid = get_hyperparameter_grid(model_choice)
-            model_pipeline, metrics = train_model_pipeline(
-                X,
-                y,
-                preprocessor,
-                model,
-                param_grid if use_hyperparam_search else None,
-                search_type,
-                split_ratio,
-                random_state,
-                use_cross_validation,
-            )
-            st.session_state.model_pipeline = model_pipeline
-            st.session_state.trained_model = model_pipeline.named_steps['model']
-            st.session_state.metrics = metrics
-            st.session_state.model_name = model_choice
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button('Train model'):
+            with st.spinner('Training the model. This may take a moment...'):
+                preprocessor = st.session_state.preprocessor
+                if preprocessor is None:
+                    st.warning('No preprocessing pipeline found. Rebuilding with default options.')
+                    preprocessor, numeric_cols, categorical_cols = build_preprocessing_pipeline(X)
+                    st.session_state.preprocessor = preprocessor
+                    st.session_state.feature_names = extract_feature_names(preprocessor, numeric_cols, categorical_cols)
+                model = get_regression_model(model_choice)
+                param_grid = get_hyperparameter_grid(model_choice)
+                model_pipeline, metrics = train_model_pipeline(
+                    X,
+                    y,
+                    preprocessor,
+                    model,
+                    param_grid if use_hyperparam_search else None,
+                    search_type,
+                    split_ratio,
+                    random_state,
+                    use_cross_validation,
+                )
+                st.session_state.model_pipeline = model_pipeline
+                st.session_state.trained_model = model_pipeline.named_steps['model']
+                st.session_state.metrics = metrics
+                st.session_state.model_name = model_choice
+    with col2:
+        if st.button('Auto-Train Best Model'):
+            with st.spinner('Searching for the best model automatically...'):
+                preprocessor = st.session_state.preprocessor
+                if preprocessor is None:
+                    st.warning('No preprocessing pipeline found. Rebuilding with default options.')
+                    preprocessor, numeric_cols, categorical_cols = build_preprocessing_pipeline(X)
+                    st.session_state.preprocessor = preprocessor
+                    st.session_state.feature_names = extract_feature_names(preprocessor, numeric_cols, categorical_cols)
+
+                best_pipeline, best_metrics, best_model_name = auto_train_best_model(
+                    X,
+                    y,
+                    preprocessor,
+                    split_ratio,
+                    random_state,
+                    use_cross_validation,
+                    use_hyperparam_search,
+                    search_type,
+                )
+                if best_pipeline is None or best_metrics is None:
+                    st.error('Unable to auto-train any model successfully.')
+                else:
+                    st.session_state.model_pipeline = best_pipeline
+                    st.session_state.trained_model = best_pipeline.named_steps['model']
+                    st.session_state.metrics = best_metrics
+                    st.session_state.model_name = best_model_name
+                    st.success(f'Auto-trained best model: {best_model_name}')
 
     if st.session_state.metrics:
         st.subheader('Model Evaluation Metrics')
@@ -302,10 +367,10 @@ def show_modeling_section():
         st.metric('R² Score', f'{metrics.get("r2", 0):.2f}')
 
         st.markdown('### Actual vs Predicted')
-        st.plotly_chart(plot_actual_vs_predicted(metrics.get('y_test'), metrics.get('y_pred')), width='stretch')
+        st.plotly_chart(plot_actual_vs_predicted(metrics.get('y_test'), metrics.get('y_pred')), use_container_width=True)
 
         st.markdown('### Model Comparison')
-        st.plotly_chart(plot_metric_comparison(metrics), width='stretch')
+        st.plotly_chart(plot_metric_comparison(metrics), use_container_width=True)
 
         if metrics.get('best_params'):
             st.markdown('### Best Hyperparameters')

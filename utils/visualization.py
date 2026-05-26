@@ -1,10 +1,25 @@
 import numpy as np
 import pandas as pd
 import plotly.express as px
+from sklearn.preprocessing import LabelEncoder
 
 
 def correlation_heatmap(df: pd.DataFrame):
-    corr = df.corr()
+    # Create a copy to avoid modifying original data
+    df_encoded = df.copy()
+    
+    # Encode categorical columns
+    categorical_cols = df_encoded.select_dtypes(include=['object']).columns
+    for col in categorical_cols:
+        le = LabelEncoder()
+        df_encoded[col] = le.fit_transform(df_encoded[col].astype(str))
+    
+    # Calculate correlation on all columns (now all numeric)
+    corr = df_encoded.corr()
+    num_cols = len(corr.columns)
+    fig_height = max(600, num_cols * 50)
+    fig_width = max(800, num_cols * 50)
+    
     fig = px.imshow(
         corr,
         text_auto=True,
@@ -12,7 +27,13 @@ def correlation_heatmap(df: pd.DataFrame):
         aspect='auto',
         title='Correlation Heatmap',
     )
-    fig.update_layout(margin=dict(l=40, r=40, t=60, b=40))
+    fig.update_layout(
+        margin=dict(l=150, r=40, t=60, b=150),
+        height=fig_height,
+        width=fig_width,
+        xaxis={'side': 'bottom'},
+    )
+    fig.update_xaxes(tickangle=-45)
     return fig
 
 
@@ -74,10 +95,25 @@ def plot_pairplot(df: pd.DataFrame, columns: list):
 def plot_feature_importance(model, feature_names: list):
     importance = None
     if hasattr(model, 'feature_importances_'):
-        importance = model.feature_importances_
+        importance = np.asarray(model.feature_importances_)
     elif hasattr(model, 'coef_'):
-        importance = np.abs(model.coef_)
+        importance = np.abs(np.asarray(model.coef_))
     if importance is None:
+        return None
+
+    if importance.ndim > 1:
+        if importance.shape[0] == 1:
+            importance = importance.ravel()
+        else:
+            importance = importance.mean(axis=0)
+
+    importance = importance.ravel()
+    if len(feature_names) != len(importance):
+        min_len = min(len(feature_names), len(importance))
+        feature_names = feature_names[:min_len]
+        importance = importance[:min_len]
+
+    if len(feature_names) == 0 or len(importance) == 0:
         return None
 
     importance_df = pd.DataFrame(
@@ -134,3 +170,5 @@ def plot_metric_comparison(metrics: dict):
     )
     fig.update_layout(margin=dict(l=40, r=40, t=60, b=40))
     return fig
+
+
