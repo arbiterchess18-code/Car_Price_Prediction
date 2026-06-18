@@ -296,7 +296,7 @@ def show_modeling_section():
     )
     split_ratio = st.slider('Train test split ratio', min_value=0.1, max_value=0.5, value=0.2, step=0.05)
     random_state = st.number_input('Random state', min_value=0, max_value=9999, value=42, step=1)
-    use_cross_validation = st.checkbox('Enable cross-validation', value=False)
+    use_cross_validation = False
     use_hyperparam_search = st.checkbox('Use hyperparameter tuning', value=False)
     search_type = None
     if use_hyperparam_search:
