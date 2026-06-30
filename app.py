@@ -420,13 +420,13 @@ def show_prediction_section():
                 st.error('Unable to generate prediction from the entered values.')
                 st.error(str(ex))
 
-    # --- Secret Manual Calculation Solver Section ---
-    if st.session_state.get('show_secret_calculator', False):
+    # --- Manual Calculation Solver Section ---
+    model = st.session_state.model_pipeline.named_steps.get('model')
+    if model is not None and model.__class__.__name__ == 'LinearRegression':
         st.markdown('---')
-        st.subheader('🤫 Secret Manual Calculation Solver')
-        
-        model = st.session_state.model_pipeline.named_steps.get('model')
-        if model is not None and model.__class__.__name__ == 'LinearRegression':
+        show_solver = st.checkbox("Show manual calculation breakdown", value=True)
+        if show_solver:
+            st.subheader('Manual Calculation Solver')
             try:
                 # Extract parameters
                 intercept = model.intercept_
@@ -515,8 +515,6 @@ def show_prediction_section():
             except Exception as e:
                 st.error("Error generating manual calculation steps.")
                 st.error(str(e))
-        else:
-            st.warning("⚠️ The secret calculator only supports Linear Regression models. Please select and train a Linear Regression model first in the 'Modeling' section.")
 
 
 def main():
@@ -527,51 +525,8 @@ def main():
     )
 
     sidebar = st.sidebar
+    sidebar.title('Navigation')
     
-    # Hide button styles to make the button look like plain text
-    st.markdown("""
-        <style>
-        /* Target the Navigation button in the sidebar */
-        div[data-testid="stSidebar"] button {
-            background-color: transparent !important;
-            color: inherit !important;
-            border: none !important;
-            padding: 0 !important;
-            font-size: 1.5rem !important;
-            font-weight: 700 !important;
-            text-align: left !important;
-            box-shadow: none !important;
-            cursor: pointer !important;
-            margin: 0 !important;
-            line-height: 1.2 !important;
-            outline: none !important;
-        }
-        div[data-testid="stSidebar"] button:hover,
-        div[data-testid="stSidebar"] button:focus,
-        div[data-testid="stSidebar"] button:active {
-            background-color: transparent !important;
-            color: inherit !important;
-            border: none !important;
-            box-shadow: none !important;
-            outline: none !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    if 'show_secret_calculator' not in st.session_state:
-        st.session_state.show_secret_calculator = False
-
-    nav_title = 'Navigation'
-    if st.session_state.show_secret_calculator:
-        nav_title += ' 🤫'
-
-    if sidebar.button(nav_title, key='toggle_secret_calc'):
-        st.session_state.show_secret_calculator = not st.session_state.show_secret_calculator
-        try:
-            st.rerun()
-        except AttributeError:
-            st.experimental_rerun()
-
     page = sidebar.radio(
         'Go to',
         ['Dataset Upload', 'Preprocessing', 'EDA & Visualization', 'Modeling', 'Manual Prediction'],
