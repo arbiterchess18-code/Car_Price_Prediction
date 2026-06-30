@@ -420,6 +420,104 @@ def show_prediction_section():
                 st.error('Unable to generate prediction from the entered values.')
                 st.error(str(ex))
 
+    # --- Secret Manual Calculation Solver Section ---
+    if st.session_state.get('show_secret_calculator', False):
+        st.markdown('---')
+        st.subheader('🤫 Secret Manual Calculation Solver')
+        
+        model = st.session_state.model_pipeline.named_steps.get('model')
+        if model is not None and model.__class__.__name__ == 'LinearRegression':
+            try:
+                # Extract parameters
+                intercept = model.intercept_
+                coefs = model.coef_
+                
+                # Extract feature names
+                preprocessor = st.session_state.model_pipeline.named_steps.get('preprocessor')
+                X_temp = st.session_state.df_clean.drop(columns=[st.session_state.target_column])
+                numeric_cols = X_temp.select_dtypes(include=np.number).columns.tolist()
+                categorical_cols = X_temp.select_dtypes(include=['object', 'category']).columns.tolist()
+                
+                # Retrieve feature names from preprocessor
+                feature_names = extract_feature_names(preprocessor, numeric_cols, categorical_cols)
+                
+                # Get the preprocessed row for the current manual inputs
+                all_features = X_temp.columns.tolist()
+                manual_row = {feature: None for feature in all_features}
+                manual_row.update(input_data)
+                for feature in all_features:
+                    if manual_row[feature] is None:
+                        if pd.api.types.is_numeric_dtype(st.session_state.df_clean[feature]):
+                            manual_row[feature] = float(st.session_state.df_clean[feature].median())
+                        else:
+                            manual_row[feature] = str(st.session_state.df_clean[feature].mode().iloc[0])
+                row = pd.DataFrame([manual_row])
+                
+                processed_x = preprocessor.transform(row)
+                if hasattr(processed_x, 'toarray'):
+                    processed_x = processed_x.toarray()
+                
+                # Create calculation steps
+                calc_steps = []
+                for i, name in enumerate(feature_names):
+                    val = processed_x[0, i]
+                    coef = coefs[i]
+                    contrib = val * coef
+                    
+                    # Map back to original features to explain scaling/encoding
+                    mapped_origin = "Numeric feature"
+                    for cat in categorical_cols:
+                        if name.startswith(cat):
+                            val_str = str(manual_row.get(cat))
+                            if name == f"{cat}_{val_str}":
+                                mapped_origin = f"Categorical: {cat} = '{val_str}' (Match: 1)"
+                            else:
+                                suffix = name[len(cat)+1:]
+                                mapped_origin = f"Categorical: {cat} = '{val_str}' (No match with '{suffix}': 0)"
+                            break
+                    for num in numeric_cols:
+                        if name == num:
+                            mapped_origin = f"Numeric: Raw value = {manual_row.get(num)}"
+                            break
+                            
+                    calc_steps.append({
+                        'Preprocessed Feature': name,
+                        'Original Feature / State': mapped_origin,
+                        'Preprocessed Value (X)': round(val, 4),
+                        'Coefficient (β)': round(coef, 4),
+                        'Contribution (β × X)': round(contrib, 4),
+                        '_raw_contrib': contrib
+                    })
+                
+                calc_df = pd.DataFrame(calc_steps)
+                
+                st.markdown(f"**Model Intercept ($\\beta_0$):** `{intercept:,.4f}`")
+                
+                filter_zeros = st.checkbox("Hide features with zero contribution", value=False)
+                if filter_zeros:
+                    display_df = calc_df[calc_df['Preprocessed Value (X)'] != 0]
+                else:
+                    display_df = calc_df
+                    
+                st.dataframe(display_df.drop(columns=['_raw_contrib']), use_container_width=True)
+                
+                sum_contrib = sum(item['_raw_contrib'] for item in calc_steps)
+                final_calc = intercept + sum_contrib
+                
+                st.markdown("#### Formula & Step-by-Step Sum:")
+                st.latex(r"Y = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \dots + \beta_n X_n")
+                st.latex(rf"\text{{Price}} = {intercept:,.4f} + ({sum_contrib:+,.4f}) = {final_calc:,.4f}")
+                st.info(f"**Step-by-step check:**  \n"
+                        f"- **Intercept (Constant):** `{intercept:,.4f}`  \n"
+                        f"- **Sum of Feature Contributions:** `{sum_contrib:,.4f}`  \n"
+                        f"- **Resulting Price:** `₹{final_calc:,.2f}`")
+                        
+            except Exception as e:
+                st.error("Error generating manual calculation steps.")
+                st.error(str(e))
+        else:
+            st.warning("⚠️ The secret calculator only supports Linear Regression models. Please select and train a Linear Regression model first in the 'Modeling' section.")
+
 
 def main():
     init_session_state()
@@ -429,7 +527,51 @@ def main():
     )
 
     sidebar = st.sidebar
-    sidebar.title('Navigation')
+    
+    # Hide button styles to make the button look like plain text
+    st.markdown("""
+        <style>
+        /* Target the Navigation button in the sidebar */
+        div[data-testid="stSidebar"] button {
+            background-color: transparent !important;
+            color: inherit !important;
+            border: none !important;
+            padding: 0 !important;
+            font-size: 1.5rem !important;
+            font-weight: 700 !important;
+            text-align: left !important;
+            box-shadow: none !important;
+            cursor: pointer !important;
+            margin: 0 !important;
+            line-height: 1.2 !important;
+            outline: none !important;
+        }
+        div[data-testid="stSidebar"] button:hover,
+        div[data-testid="stSidebar"] button:focus,
+        div[data-testid="stSidebar"] button:active {
+            background-color: transparent !important;
+            color: inherit !important;
+            border: none !important;
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    if 'show_secret_calculator' not in st.session_state:
+        st.session_state.show_secret_calculator = False
+
+    nav_title = 'Navigation'
+    if st.session_state.show_secret_calculator:
+        nav_title += ' 🤫'
+
+    if sidebar.button(nav_title, key='toggle_secret_calc'):
+        st.session_state.show_secret_calculator = not st.session_state.show_secret_calculator
+        try:
+            st.rerun()
+        except AttributeError:
+            st.experimental_rerun()
+
     page = sidebar.radio(
         'Go to',
         ['Dataset Upload', 'Preprocessing', 'EDA & Visualization', 'Modeling', 'Manual Prediction'],
